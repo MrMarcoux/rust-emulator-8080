@@ -7,9 +7,44 @@ use std::env;
 
 #[derive(Debug)]
 struct Instruction {
-    opcode: u32,
+    opcode: u8,
     name: String,
     size: usize,
+}
+
+pub struct ConditionCodes {
+    z: bool,
+    s: bool,
+    p: bool,
+    cy: bool,
+    ac: bool,
+    pad: u8,
+}
+
+fn default_codes() -> ConditionCodes {
+    return ConditionCodes {
+        z: true,
+        s: true,
+        p: true,
+        cy: true,
+        ac: true,
+        pad: 3,
+    };
+}
+
+pub struct State8080 {
+    a: u8,
+    b: u8,
+    c: u8,
+    d: u8,
+    e: u8,
+    h: u8,
+    l: u8,
+    sp: u16,
+    pc: usize,
+    memory: Vec<u8>,
+    cc: ConditionCodes,
+    int_enable: bool,
 }
 
 fn parse_instructions(file_path: &str) -> Result<Vec<Instruction>, Box<dyn Error>> {
@@ -44,7 +79,7 @@ fn disassemble_code(instructions: &[Instruction], code: &[u8]) {
     let mut offset: usize = 0;
 
     while offset < code.len() {
-        let opcode = code[offset] as u32;
+        let opcode = code[offset] as u8;
 
         if let Some(instruction) = instructions.iter().find(|&instr| instr.opcode == opcode) {
             let mut op_string = String::new();
@@ -64,7 +99,54 @@ fn disassemble_code(instructions: &[Instruction], code: &[u8]) {
             break;
         }
     }
-    
+}
+
+fn unimplemented_instruction(state: &State8080) {
+    println!("Unrecognized instruction called.");
+    process::exit(1);
+}
+
+fn parity(value: u16) -> bool {
+    let set_bits_count = value.count_ones();
+
+    set_bits_count % 2 == 0
+}
+
+fn add_operation(state: &mut State8080, register_value: u8) {
+    let answer = state.a as u16 + register_value as u16;
+    state.cc.z = (answer & 0xff) == 0;
+    state.cc.s = (answer & 0x80) != 0;
+    state.cc.cy = answer > 0xff;
+    state.cc.p = parity(answer & 0xff);
+    state.a = (answer & 0xff) as u8;
+}
+
+fn run_emulation(state: &mut State8080, instructions: &[Instruction]) {
+    let opcode = state.memory[state.pc];
+
+    match opcode {
+        0 => {},
+        1 => {
+            state.c = state.memory[state.pc + 1];
+            state.b = state.memory[state.pc + 2];
+        },
+        128 => add_operation(state, state.b),
+        129 => add_operation(state, state.c),
+        130 => add_operation(state, state.d),
+        131 => add_operation(state, state.e),
+        132 => add_operation(state, state.h),
+        133 => add_operation(state, state.l),
+        //134 => add_operation(state, state.m),
+        135 => add_operation(state, state.a),
+        198 => add_operation(state, state.memory[state.pc + 1]),
+        _ => unimplemented_instruction(state),
+    }
+
+    if let Some(instruction) = instructions.iter().find(|&instr| instr.opcode == opcode) {
+        state.pc += instruction.size;
+    } else {
+        eprintln!("Error: Unknow opcode {:02X} at position {:04X}", opcode, state.pc);
+    }
 }
 
 fn main() {
